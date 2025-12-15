@@ -1,5 +1,6 @@
-name: make menuconfig
+name: Build OpenWrt Firmware
 
+# 防止多个构建同时运行
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,79 +15,96 @@ env:
   TZ: Asia/Shanghai
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 仅手动触发编译
 
 permissions:
-  contents: read
+  contents: read  # 仅读取仓库权限，无需写入
 
 jobs:
-  menuconfig:
+  build-firmware:
     runs-on: ubuntu-22.04
     steps:
-      - name: 🙌 Checkout
+      - name: 🙌 Checkout local files
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: 🚥 Install dependencies
+      - name: 🚥 Install full compilation dependencies
         run: |
           sudo apt-get update -qq
+          # 补充OpenWrt编译全量依赖，避免缺失
           sudo apt-get install -y --no-install-recommends \
             libncurses-dev build-essential git wget python3 bzip2 \
             flex bison gawk gcc-multilib g++-multilib gettext \
-            libssl-dev libelf-dev libncurses5-dev rsync unzip zlib1g-dev
+            libssl-dev libelf-dev libncurses5-dev rsync unzip zlib1g-dev \
+            file curl ca-certificates xz-utils patch
           sudo apt-get clean
 
+          # 创建编译工作目录
           sudo mkdir -p /workdir
           sudo chown $USER:$GROUPS /workdir
 
-      - name: 🪜 Clone source code
+      - name: 🪜 Clone OpenWrt source code
         working-directory: /workdir
         run: |
+          echo "📥 Cloning source code: $REPO_URL (branch: $REPO_BRANCH)"
           git clone $REPO_URL -b $REPO_BRANCH --single-branch --filter=blob:none openwrt
           ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+          echo "✅ Source code cloned successfully"
 
-      - name: 👩‍💻 Copy previous config if exists
+      - name: 👩‍💻 Copy preset config file
         run: |
           if [ -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" ]; then
+            echo "📁 Using preset config: $CONFIG_FILE"
             cp -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" /workdir/openwrt/.config
           else
-            echo "⚠️ No previous config found"
+            echo "⚠️ No preset config found, generate default config"
+            cd /workdir/openwrt && make defconfig
           fi
 
       - name: ⚙️ Load custom feeds
         run: |
           set -e
+          # 替换自定义feeds配置
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+          # 执行第一阶段自定义脚本
           chmod +x $DIY_P1_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
-      - name: 🧬 Update feeds
-        run: cd openwrt && ./scripts/feeds update -a
-
-      - name: 🪛 Install feeds
-        run: cd openwrt && ./scripts/feeds install -a
+      - name: 🧬 Update & install feeds
+        run: |
+          cd /workdir/openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
       - name: 🧩 Load custom configuration
         run: |
           set -e
+          # 复制自定义文件
           [ -e files ] && mv files openwrt/files
-          [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+          # 执行第二阶段自定义脚本
           chmod +x $DIY_P2_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: 🛠️ 初始化 menuconfig 配置
+      - name: 🛠️ Generate final config
         run: |
           cd /workdir/openwrt
-          [ ! -f .config ] && make defconfig
-          echo "✅ 连接 tmate 后执行：cd /workdir/openwrt && make menuconfig"
+          # 确认配置（等同于menuconfig保存）
+          make defconfig
+          # 检查配置完整性
+          make menuconfig -o .config
 
-      # 核心修改：改用 v2 版本，参数生效
-      - name: Setup tmate session（消除警告）
-        uses: mxschmitt/action-tmate@v2
+      - name: 🔨 Start compiling firmware
+        run: |
+          cd /workdir/openwrt
+          # 编译（-j$(nproc)用最大线程，编译失败时自动降级为单线程并输出详细日志）
+          make -j$(nproc) || make -j1 V=s
+          echo "✅ Compilation completed!"
+
+      - name: 📤 Upload firmware artifacts
+        uses: actions/upload-artifact@v4
         with:
-          disable-ssh-key-check: true  # v2 支持该参数，彻底消除警告
-          timeout: 120m                # v2 用 timeout 控制超时（单位：m=分钟/h=小时）
-
-      # 移除提交步骤（无需提交代码）
+          name: openwrt-mt798x-firmware
+          path: /workdir/openwrt/bin/targets/  # 固件输出目录
+          retention-days: 7  # 产物保留7天（可按需修改）
+          if-no-files-found: warn  # 无文件时仅警告，不终止流程

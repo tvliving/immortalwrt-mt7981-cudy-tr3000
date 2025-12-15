@@ -17,8 +17,9 @@ env:
 on:
   workflow_dispatch:
 
+# 仅保留必要权限（移除 write，仅保留读取权限）
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   menuconfig:
@@ -33,7 +34,11 @@ jobs:
       - name: 🚥 Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libncurses-dev build-essential git wget python3 bzip2
+          # 补充 OpenWrt 编译必需的依赖（避免编译时缺失）
+          sudo apt-get install -y --no-install-recommends \
+            libncurses-dev build-essential git wget python3 bzip2 \
+            flex bison gawk gcc-multilib g++-multilib gettext \
+            libssl-dev libelf-dev libncurses5-dev rsync unzip zlib1g-dev
           sudo apt-get clean
 
           echo "📁 Creating workdir"
@@ -80,46 +85,22 @@ jobs:
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: Setup tmate session
+      - name: 🛠️ 初始化 menuconfig 配置（可选，生成默认配置）
+        run: |
+          cd /workdir/openwrt
+          # 如果没有配置文件，生成默认配置（避免 menuconfig 报错）
+          if [ ! -f .config ]; then
+            echo "📝 Generating default config"
+            make defconfig
+          fi
+          # 启动 menuconfig 交互（tmate 连接后可手动执行 make menuconfig）
+          echo "✅ 环境准备完成！连接 tmate 后执行：cd /workdir/openwrt && make menuconfig"
+
+      - name: Setup tmate session（修复密钥警告）
         uses: mxschmitt/action-tmate@v3
         with:
-          disable-ssh-key-check: true
+          disable-ssh-key-check: true  # 核心：禁用 SSH 密钥检查，消除警告
+          timeout-minutes: 120         # 延长会话超时（默认30分钟，改为2小时，足够调试）
+          ssh: true                    # 保留 SSH 连接（如需仅用 web shell 可设为 false）
 
-      - name: 📤 Push config to main branch
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CONFIG_FILE: ${{ env.CONFIG_FILE }}
-        run: |
-          set -e
-
-          SRC="/workdir/openwrt/.config"
-          DST="$GITHUB_WORKSPACE/${CONFIG_FILE}"
-
-          echo "Source: $SRC"
-          echo "Target: $DST"
-
-          if [ ! -f "$SRC" ]; then
-            echo "No .config found at $SRC. Nothing to do."
-            exit 0
-          fi
-
-          # 确保目标目录存在并拷贝  
-          mkdir -p "$(dirname "$DST")"   
-          cp -f "$SRC" "$DST"   
-          echo "Copied .config to $DST"   
- 
-          cd "$GITHUB_WORKSPACE"   
-   
-          git config user.name "github-actions[bot]"   
-          git config user.email "github-actions[bot]@users.noreply.github.com"   
- 
-          # 检查是否有变更  
-          git add "$CONFIG_FILE"   
-          if git diff --cached --quiet; then  
-            echo "No changes to commit."   
-            exit 0  
-          fi  
- 
-          # 直接推送到主分支  
-          git commit -m "Update OpenWrt config: ${CONFIG_FILE}"   
-          git push origin HEAD:main
+      # 【完全移除】原有的 "📤 Push config to main branch" 步骤（不需要提交代码）

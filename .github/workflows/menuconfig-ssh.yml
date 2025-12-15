@@ -80,8 +80,10 @@ jobs:
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: ⌨️ Start tmate session
+      - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
+        with:
+          disable-ssh-key-check: true
 
       - name: 📤 Push config to main branch
         env:

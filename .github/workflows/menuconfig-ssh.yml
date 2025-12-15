@@ -1,6 +1,5 @@
 name: make menuconfig
 
-# 防止多个构建同时运行
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -17,7 +16,6 @@ env:
 on:
   workflow_dispatch:
 
-# 仅保留必要权限（移除 write，仅保留读取权限）
 permissions:
   contents: read
 
@@ -34,32 +32,27 @@ jobs:
       - name: 🚥 Install dependencies
         run: |
           sudo apt-get update -qq
-          # 补充 OpenWrt 编译必需的依赖（避免编译时缺失）
           sudo apt-get install -y --no-install-recommends \
             libncurses-dev build-essential git wget python3 bzip2 \
             flex bison gawk gcc-multilib g++-multilib gettext \
             libssl-dev libelf-dev libncurses5-dev rsync unzip zlib1g-dev
           sudo apt-get clean
 
-          echo "📁 Creating workdir"
           sudo mkdir -p /workdir
           sudo chown $USER:$GROUPS /workdir
 
       - name: 🪜 Clone source code
         working-directory: /workdir
         run: |
-          echo "📥 Cloning $REPO_URL (branch: $REPO_BRANCH)"
           git clone $REPO_URL -b $REPO_BRANCH --single-branch --filter=blob:none openwrt
           ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-          echo "✅ Source code cloned successfully"
 
       - name: 👩‍💻 Copy previous config if exists
         run: |
           if [ -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" ]; then
-            echo "📁 Copying previous config to openwrt/.config"
             cp -f "$GITHUB_WORKSPACE/${CONFIG_FILE}" /workdir/openwrt/.config
           else
-            echo "⚠️ No previous config found at $GITHUB_WORKSPACE/${CONFIG_FILE}"
+            echo "⚠️ No previous config found"
           fi
 
       - name: ⚙️ Load custom feeds
@@ -67,8 +60,7 @@ jobs:
           set -e
           [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
           chmod +x $DIY_P1_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P1_SH
+          cd openwrt && $GITHUB_WORKSPACE/$DIY_P1_SH
 
       - name: 🧬 Update feeds
         run: cd openwrt && ./scripts/feeds update -a
@@ -82,25 +74,19 @@ jobs:
           [ -e files ] && mv files openwrt/files
           [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
           chmod +x $DIY_P2_SH
-          cd openwrt
-          $GITHUB_WORKSPACE/$DIY_P2_SH
+          cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: 🛠️ 初始化 menuconfig 配置（可选，生成默认配置）
+      - name: 🛠️ 初始化 menuconfig 配置
         run: |
           cd /workdir/openwrt
-          # 如果没有配置文件，生成默认配置（避免 menuconfig 报错）
-          if [ ! -f .config ]; then
-            echo "📝 Generating default config"
-            make defconfig
-          fi
-          # 启动 menuconfig 交互（tmate 连接后可手动执行 make menuconfig）
-          echo "✅ 环境准备完成！连接 tmate 后执行：cd /workdir/openwrt && make menuconfig"
+          [ ! -f .config ] && make defconfig
+          echo "✅ 连接 tmate 后执行：cd /workdir/openwrt && make menuconfig"
 
-      - name: Setup tmate session（修复密钥警告）
-        uses: mxschmitt/action-tmate@v3
+      # 核心修改：改用 v2 版本，参数生效
+      - name: Setup tmate session（消除警告）
+        uses: mxschmitt/action-tmate@v2
         with:
-          disable-ssh-key-check: true  # 核心：禁用 SSH 密钥检查，消除警告
-          timeout-minutes: 120         # 延长会话超时（默认30分钟，改为2小时，足够调试）
-          ssh: true                    # 保留 SSH 连接（如需仅用 web shell 可设为 false）
+          disable-ssh-key-check: true  # v2 支持该参数，彻底消除警告
+          timeout: 120m                # v2 用 timeout 控制超时（单位：m=分钟/h=小时）
 
-      # 【完全移除】原有的 "📤 Push config to main branch" 步骤（不需要提交代码）
+      # 移除提交步骤（无需提交代码）

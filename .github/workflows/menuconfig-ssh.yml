@@ -1,6 +1,5 @@
 name: Build OpenWrt Firmware
 
-# 防止多个构建同时运行
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,10 +14,10 @@ env:
   TZ: Asia/Shanghai
 
 on:
-  workflow_dispatch:  # 仅手动触发编译
+  workflow_dispatch:
 
 permissions:
-  contents: read  # 仅读取仓库权限，无需写入
+  contents: read
 
 jobs:
   build-firmware:
@@ -32,12 +31,11 @@ jobs:
       - name: 🚥 Install full compilation dependencies
         run: |
           sudo apt-get update -qq
-          # 补充OpenWrt编译全量依赖，避免缺失
           sudo apt-get install -y --no-install-recommends \
             libncurses-dev build-essential git wget python3 bzip2 \
             flex bison gawk gcc-multilib g++-multilib gettext \
             libssl-dev libelf-dev libncurses5-dev rsync unzip zlib1g-dev \
-            file curl ca-certificates xz-utils patch
+            file curl ca-certificates xz-utils patch libcrypt-dev  # 补充libcrypt依赖
           sudo apt-get clean
 
           # 创建编译工作目录
@@ -76,6 +74,8 @@ jobs:
           cd /workdir/openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # 修复feeds依赖缺失警告（手动安装缺失包）
+          ./scripts/feeds install -p packages libcrypt-compat python3-pysocks python3-unidecode python-setuptools
 
       - name: 🧩 Load custom configuration
         run: |
@@ -86,18 +86,20 @@ jobs:
           chmod +x $DIY_P2_SH
           cd openwrt && $GITHUB_WORKSPACE/$DIY_P2_SH
 
-      - name: 🛠️ Generate final config
+      - name: 🛠️ Generate final config (非交互式)
         run: |
           cd /workdir/openwrt
-          # 确认配置（等同于menuconfig保存）
-          make defconfig
-          # 检查配置完整性
-          make menuconfig -o .config
+          # 关键修复：移除交互式make menuconfig，改用纯命令行确认配置
+          make defconfig  # 生成/确认配置（无终端依赖）
+          make -j1 oldconfig  # 自动确认配置变更（非交互式）
+          echo "✅ Config generated successfully"
 
       - name: 🔨 Start compiling firmware
         run: |
           cd /workdir/openwrt
-          # 编译（-j$(nproc)用最大线程，编译失败时自动降级为单线程并输出详细日志）
+          # 预下载编译依赖（避免编译中断）
+          make download -j$(nproc)
+          # 编译（-j$(nproc)用最大线程，失败时切单线程输出详细日志）
           make -j$(nproc) || make -j1 V=s
           echo "✅ Compilation completed!"
 
@@ -105,6 +107,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openwrt-mt798x-firmware
-          path: /workdir/openwrt/bin/targets/  # 固件输出目录
-          retention-days: 7  # 产物保留7天（可按需修改）
-          if-no-files-found: warn  # 无文件时仅警告，不终止流程
+          path: /workdir/openwrt/bin/targets/
+          retention-days: 7
+          if-no-files-found: warn

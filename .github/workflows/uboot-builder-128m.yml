@@ -2,12 +2,19 @@ name: 798x-UBOOT
 
 on:
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: '是否发布为预发布版本 (Pre-release)'
+        required: false
+        type: boolean
+        default: false
 
 env:
   GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
   WRT_TARGET: MTK-798x
-  WRT_REPO: https://github.com/weekdaycare/bl-mt798x-oss
-  WRT_BRANCH: fit-example
+  WRT_REPO: https://github.com/weekdaycare/bl-mt798x-dhcpd
+  WRT_BRANCH: master
+  PRERELEASE: ${{ github.event.inputs.prerelease }}
 
 permissions: write-all
 
@@ -47,7 +54,7 @@ jobs:
       - name: 🛠️ Compile Firmware
         run: |
           cd ./wrt/
-          SOC=mt7981 BOARD=cudy_tr3000-v1 MULTI_LAYOUT=1 ./build.sh
+          SOC=mt7981 BOARD=cudy_tr3000-v1 VERSION=2025 MULTI_LAYOUT=1 ./build.sh
 
       - name: 📦 Package Firmware
         run: |
@@ -76,7 +83,7 @@ jobs:
           **📦 Repo:** $WRT_REPO
           **🌿 Branch:** $WRT_BRANCH
           **📱 ATF:** atf-20250711
-          **📱 MTK:** uboot-mtk-20220606
+          **📱 MTK:** uboot-mtk-20250711
           **📅 Build Date:** $(date +"%Y-%m-%d %H:%M:%S")
 
           ## 📥 Download
@@ -85,7 +92,7 @@ jobs:
 
           ## 🚧 Notice
 
-          该固件为三分区 uboot ，支持原厂 ubi 大小 64MB，扩容 ubi 分区 112MB，最大 ubi 分区 122MB
+          该固件为 DHCP 三分区 uboot ，支持原厂 ubi 大小 64MB，扩容 ubi 分区 112MB，最大 ubi 分区 122MB
 
           ---
 
@@ -102,13 +109,5 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           body_path: release.txt
+          prerelease: ${{ env.PRERELEASE == 'true' }}
           files: ./wrt/upload/*.bin
-
-      - name: 🗑️ Remove old releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        with:
-          keep_latest: 1
-          delete_tags: true
-          delete_tag_pattern: "^uboot-.*$"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
